@@ -1,0 +1,12 @@
+{
+  "transport": {
+    "network": "unix",
+    "address": "/tmp/mmq.sock",
+    "addressChannel": "/tmp/mmq_channel.sock"
+  },
+  "logging": {
+    "output": "stdout",
+    "level": "debug",
+    "format": "text"
+  }
+}
