@@ -19,8 +19,8 @@ type transport struct {
 	publicKey       *api.KyberPublicKey
 	publicKeyPem    []byte
 	securityEnabled bool
-	listener        net.Listener
-	listenerChannel net.Listener
+	listenerCommand net.Listener
+	listenerPublish net.Listener
 }
 
 func NewTransportService(config *config.Config, b common.BrokerService, u common.UserService) common.Service {
@@ -54,21 +54,21 @@ func (s *transport) Start() {
 	os.Remove(s.config.AddressCommand)
 	os.Remove(s.config.AddressPublish)
 
-	s.listener, err = net.Listen(s.config.Network, s.config.AddressCommand)
+	s.listenerCommand, err = net.Listen(s.config.Network, s.config.AddressCommand)
 	if err != nil {
-		log.Fatal("failed to create listener: %w", err)
+		log.Fatal("failed to create listenerCommand: %w", err)
 	}
-	log.Infof("transport listening on %s", s.listener.Addr())
-	s.listenerChannel, err = net.Listen(s.config.Network, s.config.AddressPublish)
+	log.Infof("transport listening on %s", s.listenerCommand.Addr())
+	s.listenerPublish, err = net.Listen(s.config.Network, s.config.AddressPublish)
 	if err != nil {
-		log.Fatalf("failed to create publish listener: %v", err)
+		log.Fatalf("failed to create publish listenerCommand: %v", err)
 	}
-	log.Infof("transport listening on publish %s", s.listenerChannel.Addr())
+	log.Infof("transport listening on publish %s", s.listenerPublish.Addr())
 	go func() {
 		for {
-			conn, err := s.listener.Accept()
+			conn, err := s.listenerCommand.Accept()
 			if errors.Is(err, net.ErrClosed) {
-				log.Infof("Accept error: %v", err)
+				log.Infof("Connection closed!")
 				break
 			}
 			go s.handleConnectionCommand(conn)
@@ -76,7 +76,7 @@ func (s *transport) Start() {
 	}()
 	go func() {
 		for {
-			connChannel, err := s.listenerChannel.Accept()
+			connChannel, err := s.listenerPublish.Accept()
 			if err != nil {
 				log.Infof("Accept error: %v", err)
 				continue
@@ -95,14 +95,14 @@ func (s *transport) cleanupUnixSocket() {
 }
 
 func (s *transport) Shutdown() {
-	s.listener.Close()
+	s.listenerCommand.Close()
 	s.cleanupUnixSocket()
 	log.Infof("Transport shut down")
 }
 
 func (s *transport) handleConnectionCommand(conn net.Conn) {
 	defer conn.Close()
-	log.Infof("New connection from '%s'", conn.RemoteAddr())
+	log.Infof("New connection from '%s'", conn.RemoteAddr().String())
 
 	// CONNECT
 	noCipher := api.NewNoCipher()
@@ -202,7 +202,7 @@ func (s *transport) handleConnectionCommand(conn net.Conn) {
 func (s *transport) handleMessage(clientID string, conn net.Conn, cipher api.Cipher, msg *api.Message) bool {
 	switch msg.Type {
 	case api.TypePublish:
-		s.broker.Publish(msg.Topic, msg.Payload, clientID)
+		s.broker.Publish(msg.Properties, msg.Topic, msg.Payload, clientID)
 		connAck := &api.Message{
 			Type:     api.TypePublishAck,
 			ClientId: clientID,
@@ -297,7 +297,7 @@ func (s *transport) handleConnectionPublish(conn net.Conn) {
 		log.Warnf("User '%s' not found", userName)
 		return
 	}
-	log.Infof("New publish connection from '%s' for user '%s'", conn.RemoteAddr(), user.Name())
+	log.Infof("New publish connection from '%s' for user '%s'", conn.RemoteAddr().Network(), user.Name())
 	clientID := msg.ClientId
 	if clientID == "" {
 		log.Warnf("Empty client ID")

@@ -1,0 +1,22 @@
+{
+  "transport": {
+    "network": "tcp",
+    "addressCommand": ":9996",
+    "addressPublish": ":9997"
+  },
+  "logging": {
+    "output": "stdout",
+    "level": "info",
+    "format": "text"
+  },
+  "users": {
+    "databaseFile": "../users.db"
+  },
+  "storage": {
+    "dbFile": "../storage.db"
+  },
+  "crypto": {
+    "privateKeyFile": "../keys/server/privateKey.pem",
+    "publicKeyFile": "../keys/server/publicKey.pem"
+  }
+}

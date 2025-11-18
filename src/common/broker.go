@@ -16,5 +16,5 @@ type BrokerService interface {
 	Client(clientId string) BrokerClient
 	Subscribe(clientID, topic string) (string, error)
 	Unsubscribe(clientID, topic string, subscriptionId string) error
-	Publish(topic string, payload []byte, publisherID string)
+	Publish(properties api.MessageProperty, topic string, payload []byte, publisherID string)
 }

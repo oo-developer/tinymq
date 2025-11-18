@@ -38,28 +38,37 @@ type broker struct {
 	subscriptions  map[string]map[string]*subscription
 	matchCache     map[string][]string
 	messages       map[string]*api.Message
+	storage        common.StorageService
 	publishChannel chan *api.Message
 	mu             sync.RWMutex
 }
 
-func NewBrokerService() common.BrokerService {
+func NewBrokerService(storage common.StorageService) common.BrokerService {
 	b := &broker{
 		clients:        make(map[string]*clientInfo),
 		subscriptions:  make(map[string]map[string]*subscription),
 		matchCache:     make(map[string][]string),
 		messages:       make(map[string]*api.Message),
+		storage:        storage,
 		publishChannel: make(chan *api.Message, 100000),
 	}
-	go func() {
-		for msg := range b.publishChannel {
-			//msg := <-b.publishChannel
-			b.publish(msg)
-		}
-	}()
 	return b
 }
 
 func (b *broker) Start() {
+	// Publish go func pool
+	for ii := 0; ii < 10; ii++ {
+		go func() {
+			for {
+				msg := <-b.publishChannel
+				b.publish(msg)
+			}
+		}()
+	}
+	// Load persistent message
+	for _, msg := range b.storage.GetAllMessages() {
+		b.messages[msg.Topic] = msg
+	}
 	log.Info("BrokerService started")
 }
 
@@ -138,6 +147,14 @@ func (b *broker) Subscribe(clientID, topic string) (string, error) {
 		b.subscriptions[topic] = make(map[string]*subscription)
 	}
 	b.subscriptions[topic][sub.id] = sub
+	// Send retained messages
+	for _, msg := range b.messages {
+		if b.topicMatches(msg.Topic, topic) {
+			msgCopy := *msg
+			msgCopy.SubscriptionId = sub.id
+			client.messageChannel <- &msgCopy
+		}
+	}
 
 	log.Infof("Client %s subscribed to topic: %s", clientID, topic)
 	return sub.id, nil
@@ -176,34 +193,42 @@ func (b *broker) Unsubscribe(clientID, topic string, subscriptionId string) erro
 	return nil
 }
 
-func (b *broker) Publish(topic string, payload []byte, publisherID string) {
+func (b *broker) Publish(properties api.MessageProperty, topic string, payload []byte, publisherID string) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	msg := &api.Message{
-		Type:     api.TypeMessage,
-		Topic:    topic,
-		Payload:  payload,
-		ClientId: publisherID,
+		Properties: properties,
+		Type:       api.TypeMessage,
+		Topic:      topic,
+		Payload:    payload,
+		ClientId:   publisherID,
+	}
+	if msg.Payload == nil || len(msg.Payload) == 0 {
+		delete(b.messages, topic)
+		b.storage.RemoveMessageChannel() <- msg.Topic
+		return
 	}
 	if msg.IsRetained() {
 		b.messages[topic] = msg
+	}
+	if msg.IsPersistent() {
+		b.messages[topic] = msg
+		b.storage.AddMessageChannel() <- msg
 	}
 	b.publishChannel <- msg
 }
 
 func (b *broker) publish(msg *api.Message) {
-	go func() {
-		matches := b.findMatchingTopics(msg.Topic)
-		for _, match := range matches {
-			for _, subs := range b.subscriptions[match] {
-				if client, ok := b.clients[subs.clientId]; ok {
-					msgCopy := *msg
-					msgCopy.SubscriptionId = subs.id
-					client.messageChannel <- &msgCopy
-				}
+	matches := b.findMatchingTopics(msg.Topic)
+	for _, match := range matches {
+		for _, subs := range b.subscriptions[match] {
+			if client, ok := b.clients[subs.clientId]; ok {
+				msgCopy := *msg
+				msgCopy.SubscriptionId = subs.id
+				client.messageChannel <- &msgCopy
 			}
 		}
-	}()
+	}
 }
 
 func (b *broker) findMatchingTopics(publishedTopic string) []string {

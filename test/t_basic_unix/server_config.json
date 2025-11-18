@@ -10,7 +10,10 @@
     "format": "text"
   },
   "users": {
-    "databaseFile": "../keys/users.db"
+    "databaseFile": "../users.db"
+  },
+  "storage": {
+    "dbFile": "../storage.db"
   },
   "crypto": {
     "privateKeyFile": "../keys/server/privateKey.pem",

@@ -3,7 +3,6 @@ package user
 import (
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 
@@ -15,12 +14,17 @@ import (
 
 type user struct {
 	NameString   string `json:"name"`
+	Admin        bool   `json:"admin"`
 	PublicKeyPem string `json:"publicKeyPem"`
 	publicKey    api.KyberPublicKey
 }
 
 func (n *user) Name() string {
 	return n.NameString
+}
+
+func (n *user) IsAdmin() bool {
+	return n.Admin
 }
 
 func (n *user) PublicKey() *api.KyberPublicKey {
@@ -51,7 +55,7 @@ func (u *users) load() {
 		u.save()
 	}
 
-	data, err := ioutil.ReadFile(u.config.Users.DataBaseFile)
+	data, err := os.ReadFile(u.config.Users.DataBaseFile)
 	if err != nil {
 		log.Errorf("read user data file '%s' failed: %s", u.config.Users.DataBaseFile, err.Error())
 		os.Exit(1)

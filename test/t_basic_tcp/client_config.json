@@ -1,0 +1,6 @@
+{
+  "network": "tcp",
+  "address": ":9996",
+  "user": "test",
+  "clientPrivateKeyFile": "../keys/test_user/test_private_key.pem"
+}

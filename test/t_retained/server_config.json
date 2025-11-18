@@ -1,0 +1,22 @@
+{
+  "transport": {
+    "network": "unix",
+    "addressCommand": "/tmp/mmq",
+    "addressPublish": "/tmp/mmq_p"
+  },
+  "logging": {
+    "output": "stdout",
+    "level": "info",
+    "format": "text"
+  },
+  "users": {
+    "databaseFile": "../users.db"
+  },
+  "storage": {
+    "dbFile": "../storage.db"
+  },
+  "crypto": {
+    "privateKeyFile": "../keys/server/privateKey.pem",
+    "publicKeyFile": "../keys/server/publicKey.pem"
+  }
+}

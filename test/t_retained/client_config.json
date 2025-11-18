@@ -1,0 +1,6 @@
+{
+  "network": "unix",
+  "address": "/tmp/mmq",
+  "user": "test",
+  "clientPrivateKeyFile": "../keys/test_user/test_private_key.pem"
+}

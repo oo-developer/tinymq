@@ -14,12 +14,12 @@ import (
 
 func main() {
 	configFile := flag.String("config", "server_config.json", "Path to config file")
-	addUser := flag.String("add-user", "", "Add user")
-	removeUser := flag.String("rm-user", "", "Remove user")
+	addUser := flag.String("add-user", "", "AddMessage user")
+	removeUser := flag.String("rm-user", "", "RemoveMessage user")
 	flag.Parse()
 
 	if configFile == nil || *configFile == "" {
-		fmt.Printf("[ERROR] You must specify a config file with --config\n")
+		fmt.Printf("[ERROR] You have to specify a config file with --config\n")
 		os.Exit(1)
 	}
 	configuration := config.Load(*configFile)

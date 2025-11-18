@@ -33,9 +33,10 @@ type Client struct {
 	kemCipherText    []byte
 	securityEnabled  bool
 	subscriptions    map[string]*Subscription
+	messageChannel   chan *Message
 	done             chan struct{}
 	wg               sync.WaitGroup
-	mu               sync.Mutex
+	mu               sync.RWMutex
 }
 
 // Config holds client configuration
@@ -68,6 +69,7 @@ func NewClient(config *Config) (*Client, error) {
 		securityEnabled: false,
 		done:            make(chan struct{}),
 		subscriptions:   make(map[string]*Subscription),
+		messageChannel:  make(chan *Message, 10000),
 	}
 	clientPrivateKey, err := LoadKyberPrivateKeyFile(config.ClientPrivateKeyFile)
 	if err != nil {
@@ -75,12 +77,12 @@ func NewClient(config *Config) (*Client, error) {
 	}
 	client.clientPrivateKey = clientPrivateKey
 	client.noCipher = NewNoCipher()
+	client.handlePublishMessage()
 	return client, nil
 }
 
 func (c *Client) Connect() error {
 	var err error
-	fmt.Println("--------------------- Connect --------------------")
 	c.connCommand, err = net.Dial(c.config.Network, c.config.Address)
 	if err != nil {
 		return fmt.Errorf("failed to connect: %w", err)
@@ -230,9 +232,6 @@ func (c *Client) Subscribe(topic string, handler MessageHandler) error {
 		ClientId: c.clientId,
 	}
 
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
 	if err := msg.Send(c.connCommand, c.transportCipher); err != nil {
 		return fmt.Errorf("failed to SUBSCRIBE: %w", err)
 	}
@@ -245,7 +244,9 @@ func (c *Client) Subscribe(topic string, handler MessageHandler) error {
 		Topic:   topic,
 		Handler: handler,
 	}
+	c.mu.Lock()
 	c.subscriptions[sub.Id] = sub
+	c.mu.Unlock()
 
 	log.Printf("Subscribed to topic: %s", topic)
 	return nil
@@ -254,8 +255,6 @@ func (c *Client) Subscribe(topic string, handler MessageHandler) error {
 // Unsubscribe unsubscribes from a topic
 func (c *Client) Unsubscribe(topic string) error {
 	c.mu.Lock()
-	defer c.mu.Unlock()
-
 	toDelete := make([]string, 0)
 	for subId, sub := range c.subscriptions {
 		if sub.Topic == topic {
@@ -264,6 +263,9 @@ func (c *Client) Unsubscribe(topic string) error {
 	}
 	for _, id := range toDelete {
 		delete(c.subscriptions, id)
+	}
+	c.mu.Unlock()
+	for _, id := range toDelete {
 		msg := &Message{
 			Type:           TypeUnsubscribe,
 			Topic:          topic,
@@ -276,21 +278,25 @@ func (c *Client) Unsubscribe(topic string) error {
 		if _, err := Receive(c.connCommand, c.transportCipher); err != nil {
 			return fmt.Errorf("failed to receive UNSUBSCRIBE_ACK: %w", err)
 		}
-		log.Printf("Unsubscribed from topic: %s", topic)
 	}
 	return nil
 }
 
 // Publish publishes a message to a topic
-func (c *Client) Publish(topic string, payload []byte) error {
-	msg := &Message{
-		Type:     TypePublish,
-		Topic:    topic,
-		Payload:  payload,
-		ClientId: c.clientId,
+func (c *Client) Publish(topic string, payload []byte, properties ...MessageProperty) error {
+
+	var combinedProperties MessageProperty = 0
+	for _, prop := range properties {
+		combinedProperties |= prop
 	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	msg := &Message{
+		Type:       TypePublish,
+		Topic:      topic,
+		Payload:    payload,
+		Properties: combinedProperties,
+		ClientId:   c.clientId,
+	}
+
 	if err := msg.Send(c.connCommand, c.transportCipher); err != nil {
 		return fmt.Errorf("failed to PUBLISH: %w", err)
 	}
@@ -302,29 +308,35 @@ func (c *Client) Publish(topic string, payload []byte) error {
 }
 
 func (c *Client) receivePublishLoop() {
+
 	for {
 		msg, err := Receive(c.connPublish, c.transportCipher)
 		if err != nil {
 			log.Printf("Receive error: %v", err)
 			return
 		}
-		c.handlePublishMessage(msg)
+		c.messageChannel <- msg
 	}
 }
 
-func (c *Client) handlePublishMessage(msg *Message) {
-	switch msg.Type {
-	case TypeMessage:
-		c.mu.Lock()
-		if sub, ok := c.subscriptions[msg.SubscriptionId]; ok {
-			c.mu.Unlock()
-			sub.Handler(msg.Topic, msg.Payload)
-		} else {
-			c.mu.Unlock()
+func (c *Client) handlePublishMessage() {
+	go func() {
+		for {
+			msg := <-c.messageChannel
+			switch msg.Type {
+			case TypeMessage:
+				c.mu.RLock()
+				if sub, ok := c.subscriptions[msg.SubscriptionId]; ok {
+					c.mu.RUnlock()
+					sub.Handler(msg.Topic, msg.Payload)
+				} else {
+					c.mu.RUnlock()
+				}
+			default:
+				log.Printf("Unhandled publish message type: %v", msg.Type)
+			}
 		}
-	default:
-		log.Printf("Unhandled publish message type: %v", msg.Type)
-	}
+	}()
 }
 
 // Disconnect closes the connection
@@ -339,10 +351,8 @@ func (c *Client) Disconnect() error {
 	if _, err := Receive(c.connCommand, c.transportCipher); err != nil {
 		return fmt.Errorf("failed to receive PublishAck: %w", err)
 	}
-	close(c.done)
 	c.connCommand.Close()
 	c.connPublish.Close()
-	c.wg.Wait()
 
 	log.Printf("Client %s disconnected", c.clientId)
 	return nil
